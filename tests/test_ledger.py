@@ -3,7 +3,7 @@ from datetime import timedelta
 import pytest
 
 from fulcrum.ledger import Ledger
-from fulcrum.models import Decision, Fill, FilterResult, OrderRequest, Position, Verdict
+from fulcrum.models import Decision, Fill, FilterResult, OrderRequest, Position, Verdict, utcnow
 from tests.conftest import utc
 
 
@@ -33,14 +33,16 @@ def test_schema_created_and_reopenable(tmp_path):
 
 
 def test_order_intent_is_idempotent(ledger):
-    assert ledger.record_order_intent(_req()) is True
-    assert ledger.record_order_intent(_req()) is False  # same client id: already acted on
+    now = utcnow()
+    assert ledger.record_order_intent(_req(), decided_at=now) is True
+    assert ledger.record_order_intent(_req(), decided_at=now) is False  # same client id: already acted on
     assert len(ledger.orders()) == 1
     assert ledger.order("c1")["status"] == "new"
 
 
 def test_order_update_appends_events(ledger):
-    ledger.record_order_intent(_req())
+    now = utcnow()
+    ledger.record_order_intent(_req(), decided_at=now)
     ledger.update_order("c1", "accepted", broker_order_id="b1", submitted_at=utc(2026, 1, 1))
     ledger.update_order("c1", "filled", note="fill")
     row = ledger.order("c1")
@@ -57,11 +59,11 @@ def test_update_unknown_order_raises(ledger):
 
 def test_24h_cap_counts_only_risk_increasing_non_rejected(ledger):
     now = utc(2026, 1, 2, 12)
-    ledger.record_order_intent(_req("e1", "entry"))
-    ledger.record_order_intent(_req("e2", "increase"))
-    ledger.record_order_intent(_req("x1", "exit", "sell"))
-    ledger.record_order_intent(_req("s1", "stop", "sell"))
-    ledger.record_order_intent(_req("e3", "entry"))
+    ledger.record_order_intent(_req("e1", "entry"), decided_at=now)
+    ledger.record_order_intent(_req("e2", "increase"), decided_at=now)
+    ledger.record_order_intent(_req("x1", "exit", "sell"), decided_at=now)
+    ledger.record_order_intent(_req("s1", "stop", "sell"), decided_at=now)
+    ledger.record_order_intent(_req("e3", "entry"), decided_at=now)
     ledger.update_order("e3", "rejected")
     assert ledger.risk_increasing_orders_since(now - timedelta(days=365)) == 2
 

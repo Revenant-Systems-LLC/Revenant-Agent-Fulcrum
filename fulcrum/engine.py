@@ -31,8 +31,9 @@ from .config import Config
 from .ledger import Ledger
 from .models import (
     Candidate, Decision, Fill, FilterResult, MarketContext, OrderRequest, Plan,
-    PortfolioState, Position, RiskDecision, utcnow,
+    PortfolioState, Position, RiskDecision, utcnow, TERMINAL_STATUSES,
 )
+from .scheduler import last_scheduled_weekly
 
 log = logging.getLogger("fulcrum.engine")
 
@@ -137,13 +138,17 @@ class GhostBook:
         """Return the ghost book's current equity."""
         return self.broker.account().equity if self.broker else 0.0
 
-    def submit(self, req: OrderRequest) -> None:
-        """Submit an order to the ghost book (if it exists). Errors are logged and ignored."""
+    def submit(self, req: OrderRequest, ts: datetime | None = None) -> None:
+        """Submit an order to the ghost book (if it exists). Errors are recorded as alerts."""
         if self.broker is None:
             return
         try:
             self.broker.submit(req)
         except Exception as e:
+            # Record the failure so the ghost book measurement is not silently wrong
+            if ts is not None:
+                self.ledger.record_alert(ts, "ghost_order_failed",
+                                       {"symbol": req.symbol, "reason": f"{type(e).__name__}: {str(e)[:200]}"})
             log.debug("ghost book order failed: %s", e)
 
     def execute_stop(self, symbol: str, price: float, qty: float, now: datetime) -> bool:
@@ -252,9 +257,14 @@ class Engine:
     # ---- Helpers ----
 
     def _decision_id(self, cycle_ts: datetime, symbol: str) -> str:
-        """Generate a deterministic decision ID for idempotency."""
+        """Generate a deterministic decision ID for idempotency.
+
+        Keys the ID to the scheduled weekly rebalance slot, not wall clock time, so that
+        the same weekly decision produces the same order IDs whether executed by a hand-run
+        cycle followed by the loop, or by a rebalance that failed after sending orders."""
+        slot = last_scheduled_weekly(cycle_ts, self.cfg.schedule.rebalance_weekday, self.cfg.schedule.rebalance_hour_utc)
         return hashlib.sha1(
-            f"{self.scope}|{cycle_ts.isoformat()}|{symbol}".encode()
+            f"{self.scope}|{slot.isoformat()}|{symbol}".encode()
         ).hexdigest()[:16]
 
     def _state(self, now: datetime, prices: dict[str, float]) -> PortfolioState:
@@ -286,7 +296,7 @@ class Engine:
         (already acted on, rejected by broker, etc).
         """
         # Intent first: if this returns False, the order was already acted on (idempotency)
-        if not self.ledger.record_order_intent(req):
+        if not self.ledger.record_order_intent(req, decided_at=now):
             existing = self.ledger.order(req.client_order_id)
             return False, f"already acted on (status {existing['status']})"
 
@@ -541,22 +551,28 @@ class Engine:
                 )
 
         # Step 8: Filter (buys only). Build candidates, call filter, record result.
+        # Fail open: if the filter throws, continue with no vetoes (allow all).
         vetoed_symbols: frozenset[str] = frozenset()
         if self.cfg.llm_filter.mode != "off" and buys:
             cand_list = [c for _, c, _ in buys]
             summary = f"{len([r for r in last.values() if r['conviction'] > 0])} of {len(last)} symbols have positive conviction"
             context = MarketContext(as_of=now, summary=summary, headlines=headlines)
-            filter_result = self.filter.evaluate(cand_list, context)
-            res.filter_result = filter_result
-            self.ledger.record_filter_result(
-                now,
-                self.cfg.llm_filter.mode,
-                filter_result,
-                applied=(self.cfg.llm_filter.mode == "active"),
-                decision_ids={c.symbol: self._decision_id(now, c.symbol) for c in cand_list},
-                candidates=tuple(c.symbol for c in cand_list),
-            )
-            vetoed_symbols = filter_result.vetoed()
+            try:
+                filter_result = self.filter.evaluate(cand_list, context)
+                res.filter_result = filter_result
+                self.ledger.record_filter_result(
+                    now,
+                    self.cfg.llm_filter.mode,
+                    filter_result,
+                    applied=(self.cfg.llm_filter.mode == "active"),
+                    decision_ids={c.symbol: self._decision_id(now, c.symbol) for c in cand_list},
+                    candidates=tuple(c.symbol for c in cand_list),
+                )
+                vetoed_symbols = filter_result.vetoed()
+            except Exception as e:  # noqa: BLE001  -- fail open is the requirement
+                log.exception("filter.evaluate failed: %s", e)
+                self.ledger.record_alert(now, "filter_error", {"detail": f"filter failed: {type(e).__name__}: {str(e)[:200]}"})
+                # Continue with empty vetoes (allow all buys)
 
         # Step 9: Orders. Sells first, then buys. Risk-check each. Execute or reject.
         for req, dec in sells:
@@ -639,13 +655,15 @@ class Engine:
         # - Active mode: real book skips vetoed; ghost adds them back (executes all including vetoed)
         # - Off mode: ghost mirrors real exactly
         self.ghost.ensure_seeded(state.equity, list(positions.values()), prices)
+        # Sync stops to ghost book: the counterfactual runs with same stops as the real book
+        self.ghost.stops = dict(self.stops)
         for req, _ in sells:
-            self.ghost.submit(req)
+            self.ghost.submit(req, ts=now)
         for req, cand, _ in buys:
             # Ghost skips a vetoed buy only in shadow mode (the counterfactual applies the veto)
             if cand.symbol in vetoed_symbols and self.cfg.llm_filter.mode == "shadow":
                 continue
-            self.ghost.submit(req)
+            self.ghost.submit(req, ts=now)
         self.ghost.mark(prices, now)
         self.ghost.persist(now)
 
@@ -721,28 +739,86 @@ class Engine:
             if prices[symbol] <= stop_price:
                 pos = state.positions.get(symbol)
                 if pos and pos.qty > 0:
-                    req = OrderRequest(
-                        client_order_id=rk.make_client_order_id(
-                            self.scope, f"stop-{symbol}-{now.timestamp()}", symbol, "sell", seq=0
-                        ),
-                        decision_id="",
-                        symbol=symbol,
-                        side="sell",
-                        purpose="stop",
-                        qty=pos.qty,
-                    )
-                    risk_decision = rk.check_order(
-                        req, state, self.cfg.risk, self.cfg.sizing, self.cfg.asset_class, False
-                    )
-                    for order_req in risk_decision.orders:
-                        submitted, _ = self._execute(order_req, prices[symbol], now)
-                        if submitted:
-                            res.stops_fired.append(symbol)
-                            del self.stops[symbol]
-                            try:
-                                self.notifier.send(ntf.msg_stop(now, symbol, prices[symbol], stop_price, pos.qty))
-                            except Exception as e:
-                                log.warning("notify failed: %s", e)
+                    # Use entry_decision_id if known, else 'held' (for seeds and edge cases)
+                    entry_id = self.entry_ids.get(symbol, "held")
+
+                    # Idempotent stop order IDs: keyed to (scope, entry_id, symbol, "sell", seq)
+                    # Count prior stop orders for this symbol to determine seq
+                    all_orders = self.ledger.orders()
+                    prior_stops = [
+                        o for o in all_orders
+                        if o["symbol"] == symbol and o["side"] == "sell" and o["purpose"] == "stop"
+                    ]
+                    prior_stops.sort(key=lambda o: o["created_at"])
+
+                    # Reconcile any non-terminal stop order (may be retrying after network failure)
+                    should_submit = False
+                    for prior_stop in prior_stops:
+                        if prior_stop["status"] in ("unknown", "new", "accepted", "partially_filled"):
+                            # Check broker for actual status
+                            broker_order = self.broker.order_by_client_id(prior_stop["client_order_id"])
+                            if broker_order is None:
+                                # Never reached the venue, mark rejected and will retry
+                                self.ledger.update_order(prior_stop["client_order_id"], "rejected",
+                                                       note="never reached venue")
+                                should_submit = True
+                                break  # Exit the loop to retry submission
+                            elif broker_order.filled_qty > 0 or broker_order.status == "filled":
+                                # Already filled, record and stop here
+                                if broker_order.filled_qty > 0:
+                                    self.ledger.record_fill(Fill(
+                                        client_order_id=broker_order.client_order_id,
+                                        symbol=symbol,
+                                        side="sell",
+                                        qty=broker_order.filled_qty,
+                                        price=broker_order.filled_avg_price or prices[symbol],
+                                        fee_usd=0.0,
+                                        slippage_bps_est=None,
+                                        filled_at=broker_order.filled_at or now,
+                                    ))
+                                    self.ledger.update_order(prior_stop["client_order_id"], "filled")
+                                res.stops_fired.append(symbol)
+                                del self.stops[symbol]
+                                break  # Exit the loop, stop completed
+                            else:
+                                # Still pending at venue, wait until next tick
+                                log.debug("stop order %s for %s still pending at venue", prior_stop["client_order_id"], symbol)
+                                break  # Exit the loop, wait for next tick
+                    else:
+                        # No non-terminal orders found (all were terminal or list was empty)
+                        should_submit = True
+
+                    # Submit a stop if we should (no non-terminal orders, or one was rejected)
+                    if should_submit and symbol in self.stops:
+                        # Retry with seq=0 (the same ID as the first attempt) for idempotency
+                        seq = 0
+                        client_id = rk.make_client_order_id(
+                            self.scope, entry_id, symbol, "sell", seq=seq
+                        )
+                        req = OrderRequest(
+                            client_order_id=client_id,
+                            decision_id=entry_id,
+                            symbol=symbol,
+                            side="sell",
+                            purpose="stop",
+                            qty=pos.qty,
+                        )
+                        risk_decision = rk.check_order(
+                            req, state, self.cfg.risk, self.cfg.sizing, self.cfg.asset_class, False
+                        )
+                        for order_req in risk_decision.orders:
+                            submitted, note = self._execute(order_req, prices[symbol], now)
+                            if submitted:
+                                res.stops_fired.append(symbol)
+                                del self.stops[symbol]
+                                try:
+                                    self.notifier.send(ntf.msg_stop(now, symbol, prices[symbol], stop_price, pos.qty))
+                                except Exception as e:
+                                    log.warning("notify failed: %s", e)
+                            else:
+                                if "already acted on" not in note:
+                                    self.ledger.record_alert(now, "stop_id_collision",
+                                                           {"symbol": symbol, "reason": note, "seq": seq})
                             # Refresh state
                             state = self._state(now, prices)
 

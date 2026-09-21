@@ -62,3 +62,16 @@ The report's "March 2026 stress window" does not match primary sources. Binance 
 - Trending: 2025-04-07 to 2025-10-06 (BTC $74,637 intraday low to the $126,198 all-time high, about +69%).
 - Choppy: 2023-08-01 to 2023-10-15 (BTC in a $25k to $30k range for about 59 days), extendable back to 2023-04-01.
 This is flagged to Dave in the build summary as a question about which window the report's author meant.
+
+## D-014 Defect fixes to make test_adversarial_engine.py pass (2026-09-21)
+Five defects found and fixed per the adversarial pass:
+
+1. **Filter exception handling (fail open)**: Filter exceptions now caught in `Engine.rebalance` step 8 with try/except, logged, alert recorded as "filter_error", and exits are sent first to guarantee they are not blocked by filter failures.
+
+2. **Decision ID keyed to scheduled slot, not wall clock**: `Engine._decision_id` now calls `last_scheduled_weekly(cycle_ts, weekday, hour)` to build the ID from the scheduled weekly slot instead of `cycle_ts.isoformat()`. Crash-and-restart cycles that rebalance twice in one week now produce identical order IDs and the duplicate is caught by `ledger.record_order_intent` returning False.
+
+3. **Deterministic stop order IDs with reconciliation**: Stop order client_order_ids are now keyed to (scope, entry_decision_id or "held", symbol, "sell", seq). Before submitting, `Engine.tick` queries ledger for prior stops with that key, reconciles their status against the broker (filled, pending, or rejected), and only sends with seq+1 if the prior attempt was rejected or never reached the venue. Terminal statuses stop the loop.
+
+4. **Trade cap filters on engine clock (decided_at), not wall clock**: Added `decided_at TEXT NOT NULL` column to orders table with schema migration (v1 to v2). `Ledger.record_order_intent` now requires `decided_at: datetime` parameter (the engine's decision time). `risk_increasing_orders_since` filters on `decided_at` instead of `created_at`, making the 24h cap work correctly in backtests with historical time. All callers of `record_order_intent` updated to pass `decided_at=now`.
+
+5. **Ghost book alerts on failure**: `GhostBook.submit` now accepts `ts: datetime | None` parameter and records `ledger.record_alert(ts, "ghost_order_failed", {symbol, reason})` on exception instead of only logging. This makes failed counterfactual trades visible in reports so the filter's measurement is not silently incomplete.

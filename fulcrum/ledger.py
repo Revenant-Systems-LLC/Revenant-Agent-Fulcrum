@@ -21,7 +21,7 @@ from .models import (
     Decision, Fill, FilterResult, Order, OrderRequest, Position, TERMINAL_STATUSES, require_utc, utcnow,
 )
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
@@ -45,9 +45,10 @@ CREATE TABLE IF NOT EXISTS filter_verdicts (
 CREATE TABLE IF NOT EXISTS orders (
   client_order_id TEXT PRIMARY KEY, decision_id TEXT NOT NULL, symbol TEXT NOT NULL, side TEXT NOT NULL,
   purpose TEXT NOT NULL, notional_usd REAL, qty REAL, broker_order_id TEXT, status TEXT NOT NULL,
-  submitted_at TEXT, last_update_at TEXT NOT NULL, created_at TEXT NOT NULL);
+  submitted_at TEXT, decided_at TEXT NOT NULL, last_update_at TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS ix_orders_submitted ON orders(submitted_at);
+CREATE INDEX IF NOT EXISTS ix_orders_decided ON orders(decided_at);
 
 CREATE TABLE IF NOT EXISTS order_events (
   event_id INTEGER PRIMARY KEY AUTOINCREMENT, client_order_id TEXT NOT NULL, status TEXT NOT NULL,
@@ -124,8 +125,14 @@ class Ledger:
             row = self._conn.execute("SELECT version FROM schema_version").fetchone()
             if row is None:
                 self._conn.execute("INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,))
-            elif row["version"] != SCHEMA_VERSION:
-                raise RuntimeError(f"ledger schema version {row['version']} != code {SCHEMA_VERSION}; migrate first")
+            elif row["version"] < SCHEMA_VERSION:
+                if row["version"] == 1 and SCHEMA_VERSION >= 2:
+                    self._conn.execute("ALTER TABLE orders ADD COLUMN decided_at TEXT")
+                    self._conn.execute("CREATE INDEX IF NOT EXISTS ix_orders_decided ON orders(decided_at)")
+                    self._conn.execute("UPDATE orders SET decided_at = created_at")
+                self._conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+            elif row["version"] > SCHEMA_VERSION:
+                raise RuntimeError(f"ledger schema version {row['version']} > code {SCHEMA_VERSION}; cannot downgrade")
             if self._conn.execute("SELECT 1 FROM kill_switch_state WHERE id=1").fetchone() is None:
                 self._conn.execute(
                     "INSERT INTO kill_switch_state(id, tripped, tripped_at, hwm, drawdown_at_trip, reset_at, updated_at)"
@@ -210,21 +217,27 @@ class Ledger:
                                   (_iso(since),)).fetchall()
 
     # ---- orders -----------------------------------------------------------
-    def record_order_intent(self, req: OrderRequest) -> bool:
+    def record_order_intent(self, req: OrderRequest, decided_at: datetime) -> bool:
         """Insert the order row BEFORE submitting to the broker. Returns False if the id already exists
-        (the decision was already acted on: a restart after a crash, or a duplicate call)."""
-        now = _iso(utcnow())
+        (the decision was already acted on: a restart after a crash, or a duplicate call).
+
+        The decided_at parameter is the engine's clock time when the decision was made, used to enforce
+        the 24-hour trade cap independently of wall clock time. For backtests with simulated time,
+        decided_at is the simulated time, so created_at uses decided_at too (not wall clock)."""
+        decided_iso = _iso(decided_at)
+        # In backtest with simulated time, use decided_at for created_at. In live mode, decided_at
+        # is very close to real time anyway.
         with self.tx() as c:
             exists = c.execute("SELECT 1 FROM orders WHERE client_order_id=?", (req.client_order_id,)).fetchone()
             if exists:
                 return False
             c.execute(
                 "INSERT INTO orders(client_order_id, decision_id, symbol, side, purpose, notional_usd, qty, broker_order_id,"
-                " status, submitted_at, last_update_at, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                " status, submitted_at, decided_at, last_update_at, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (req.client_order_id, req.decision_id, req.symbol, req.side, req.purpose, req.notional_usd, req.qty,
-                 None, "new", None, now, now))
+                 None, "new", None, decided_iso, decided_iso, decided_iso))
             c.execute("INSERT INTO order_events(client_order_id, status, broker_order_id, note, created_at)"
-                      " VALUES (?,?,?,?,?)", (req.client_order_id, "new", None, "intent recorded", now))
+                      " VALUES (?,?,?,?,?)", (req.client_order_id, "new", None, "intent recorded", decided_iso))
             return True
 
     def update_order(self, client_order_id: str, status: str, broker_order_id: str | None = None,
@@ -256,10 +269,13 @@ class Ledger:
                                   (_iso(since),)).fetchall()
 
     def risk_increasing_orders_since(self, since: datetime) -> int:
-        """Count of entry/increase orders created in the window that were not rejected. Used by the 24h cap."""
+        """Count of entry/increase orders decided in the window that were not rejected. Used by the 24h cap.
+
+        Filters on decided_at (the engine's clock) not created_at (wall clock), so the cap works correctly
+        in backtests with historical or accelerated time."""
         row = self._conn.execute(
             "SELECT COUNT(*) AS n FROM orders WHERE purpose IN ('entry','increase') AND status != 'rejected'"
-            " AND created_at >= ?", (_iso(since),)).fetchone()
+            " AND decided_at >= ?", (_iso(since),)).fetchone()
         return int(row["n"])
 
     # ---- fills ------------------------------------------------------------

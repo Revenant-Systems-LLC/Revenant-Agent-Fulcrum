@@ -842,13 +842,15 @@ def _parse_day(value: str, label: str):
 
 def default_history_source(cfg: Config) -> Any:
     """The public price archive the history test reads. A key free, read only GET."""
-    from .data import BinanceVisionKlines, CoinbaseCandles, RequestsGet
+    from .data import BarCache, BinanceVisionKlines, CoinbaseCandles, HistoricalSource, RequestsGet
 
     http = RequestsGet()
+    cache = BarCache(cfg.expanded(cfg.data.cache_dir))
+    # The backtest reads through HistoricalSource (cache, primary, fallback), never a bare venue.
     if cfg.data.historical_source == "coinbase":
-        return CoinbaseCandles(http)
+        return HistoricalSource(CoinbaseCandles(http), BinanceVisionKlines(http), cache)
     if cfg.data.historical_source == "binance_vision":
-        return BinanceVisionKlines(http)
+        return HistoricalSource(BinanceVisionKlines(http), CoinbaseCandles(http), cache)
     raise ConfigError(
         f"[data].historical_source is {cfg.data.historical_source!r}, which the history "
         "test cannot read from. Set it to coinbase or binance_vision"
@@ -868,8 +870,30 @@ def _score_line(name: str, measured: Any) -> str:
     return f"{name} {', '.join(bits)}."
 
 
-def render_backtest_verdict(results: dict) -> list[str]:
+class _Wrapped:
+    """Gives a benchmark's Metrics the same .metrics shape as a BacktestResult."""
+
+    def __init__(self, metrics: Any) -> None:
+        self.metrics = metrics
+
+
+_BENCHMARK_KEYS = {"btc_buy_hold": "benchmark_btc", "equal_weight_buy_hold": "benchmark_equal",
+                   "cash": "benchmark_cash"}
+
+
+def _as_results_dict(result: Any) -> dict:
+    """Accept either the older dict shape or a fulcrum.backtest.BacktestResult."""
+    if isinstance(result, dict):
+        return result
+    out: dict = {"strategy": result}
+    for key, metrics in (getattr(result, "benchmarks", None) or {}).items():
+        out[_BENCHMARK_KEYS.get(key, key)] = _Wrapped(metrics)
+    return out
+
+
+def render_backtest_verdict(results: Any) -> list[str]:
     """Turn the history test's numbers into the paragraph a non programmer reads."""
+    results = _as_results_dict(results)
     lines: list[str] = []
     strategy = results.get("strategy")
     if strategy is None:
@@ -920,7 +944,7 @@ def render_backtest_verdict(results: dict) -> list[str]:
             f"Return per unit of risk is {measured.sharpe:.2f}. That is one number over one "
             "stretch of the past. It is not a promise about the future."
         )
-    missing = getattr(strategy, "missing_dates", None) or {}
+    missing = getattr(strategy, "missing_dates", None) or getattr(strategy, "missing_days", None) or {}
     if any(missing.values()):
         names = ", ".join(sorted(k for k, v in missing.items() if v))
         lines.append(
@@ -989,7 +1013,8 @@ def cmd_backtest(cfg: Config, deps: Deps, *, start: str | None, end: str | None,
     out("Reading years of past prices. This takes a few minutes and sends no orders.")
 
     if folds:
-        results = run_folds(cfg, source, periods, ledger_path)
+        # run_folds wants a folder (one fresh ledger per fold), not a file.
+        results = run_folds(cfg, source, periods, ledger_path.parent / "backtest_folds")
         lines = render_fold_verdict(results)
     else:
         results = run_backtest(cfg, source, first, last, ledger_path)
