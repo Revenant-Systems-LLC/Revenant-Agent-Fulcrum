@@ -17,6 +17,9 @@ The stop is enforced by the scheduler tick: compare last price to the stored sto
 ## D-005 Deterministic client_order_id (2026-09-21)
 `client_order_id = sha1(f"{ledger_scope}|{decision_id}|{symbol}|{side}|{purpose}|{seq}").hexdigest()[:N]` where N is bounded by Alpaca's documented max length (verified in D-0xx) and `seq` is the split index for clamped orders. Same decision, same order, same id, so a crash between submit and ledger write cannot double-submit: reconcile finds the order by client id on restart.
 
+## D-005a Correction: purpose is not part of the client_order_id (2026-09-21, engine triage)
+Found while making the crash-and-rerun test pass: a buy's purpose is "entry" when no position exists and "increase" when one does. If the first order fills and the process dies before the ledger row is written, the rerun computes "increase" for the same decision, gets a different id, and buys twice. The id is now `sha1(scope|decision_id|symbol|side|seq)`. The decision id already pins the cycle and symbol, side separates a buy from a sell of the same decision, and purpose is carried on the order row for the risk layer, not in the key. `ledger.record_decision` is `INSERT OR IGNORE` so a rerun with identical inputs writes nothing and raises nothing.
+
 ## D-006 Pinning by freeze (2026-09-21)
 `requirements.in` lists direct dependencies with reasons; `requirements.txt` is `pip freeze` from the repo venv, so every transitive version is pinned. Reason: "pinned" means reproducible, and a lockfile is the simplest reproducible thing.
 

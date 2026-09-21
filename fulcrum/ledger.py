@@ -150,8 +150,9 @@ class Ledger:
     # ---- decisions --------------------------------------------------------
     def record_decision(self, d: Decision, run_id: str) -> None:
         with self.tx() as c:
+            # ON CONFLICT: first write wins. Crash and restart with identical inputs should not raise.
             c.execute(
-                "INSERT INTO decisions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT OR IGNORE INTO decisions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (d.decision_id, run_id, _iso(d.cycle_ts), d.symbol, d.conviction, d.target_weight, d.current_weight,
                  d.action, d.thesis, d.stop_price, d.invalidation, d.binding_constraint, _iso(utcnow())))
 
@@ -199,6 +200,14 @@ class Ledger:
         with self.tx() as c:
             c.execute("INSERT INTO shadow_daily(ts, symbol, conviction, verdict, reason, error, created_at)"
                       " VALUES (?,?,?,?,?,?,?)", (_iso(ts), symbol, conviction, verdict, reason, error, _iso(utcnow())))
+
+    def shadow_daily(self, since: datetime | None = None) -> list[sqlite3.Row]:
+        """Daily hypothetical filter runs, oldest first. Added for report.py, which had
+        no public reader for this table and would otherwise reach into the connection."""
+        if since is None:
+            return self._conn.execute("SELECT * FROM shadow_daily ORDER BY id").fetchall()
+        return self._conn.execute("SELECT * FROM shadow_daily WHERE ts>=? ORDER BY id",
+                                  (_iso(since),)).fetchall()
 
     # ---- orders -----------------------------------------------------------
     def record_order_intent(self, req: OrderRequest) -> bool:

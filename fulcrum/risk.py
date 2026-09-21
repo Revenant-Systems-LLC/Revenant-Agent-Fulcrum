@@ -27,7 +27,7 @@ def _as_dt(value) -> datetime | None:
 
 
 def make_client_order_id(
-    scope: str, decision_id: str, symbol: str, side: str, purpose: str, seq: int, max_len: int = 48
+    scope: str, decision_id: str, symbol: str, side: str, seq: int, max_len: int = 48
 ) -> str:
     """Deterministic, idempotent order ID.
 
@@ -41,8 +41,6 @@ def make_client_order_id(
         Asset symbol.
     side : str
         "buy" or "sell".
-    purpose : str
-        Order purpose: entry, increase, exit, stop.
     seq : int
         Sequence number for split orders (0 for the first order from a decision).
     max_len : int
@@ -52,8 +50,12 @@ def make_client_order_id(
     -------
     str
         SHA1 hex digest, truncated to max_len. Same inputs, same ID.
+
+    Note: purpose is not included in the key because it is state-dependent
+    (entry vs increase for buys) and defeats crash-and-rerun idempotency.
+    decision_id + symbol + side + seq is already unique per order.
     """
-    parts = [scope, decision_id, symbol, side, purpose, str(seq)]
+    parts = [scope, decision_id, symbol, side, str(seq)]
     payload = "|".join(parts)
     digest = hashlib.sha1(payload.encode()).hexdigest()
     return digest[:max_len]

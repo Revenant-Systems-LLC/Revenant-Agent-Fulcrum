@@ -357,23 +357,35 @@ class Engine:
             return res
 
         # Step 2: Stale data guard. Check if the newest bar is too old.
-        newest = max(df.index[-1] for df in bars.values() if len(df))
+        # Guard against empty bars dict (all symbols have no data)
+        bar_timestamps = [df.index[-1] for df in bars.values() if len(df)]
+        if not bar_timestamps:
+            res.skipped_reason = "no bars with data for any symbol"
+            self._alert(now, "no_data", res.skipped_reason)
+            return res
+        newest = max(bar_timestamps)
         if rk.bars_are_stale(newest.to_pydatetime(), now, self.cfg.risk):
             res.skipped_reason = f"stale data: newest bar opened {newest.isoformat()}"
             self._alert(now, "stale_data", res.skipped_reason)
             return res
 
         # Step 3: Features and signal for each symbol with enough history.
+        # Per-symbol error handling: one symbol's bad data does not stop the cycle (item g).
         last: dict[str, dict] = {}
         for s in universe:
             df = bars[s]
             if len(df) < self.cfg.signal.min_history_days:
                 continue
-            f = feat.compute_features(df, self.cfg.signal, self.cfg.asset_class.trading_days_per_year)
-            row = f.iloc[-1].to_dict()
-            row["conviction"] = sig.conviction_from_row(row, self.cfg.signal)
-            row["thesis"] = sig.explain(row, self.cfg.signal)
-            last[s] = row
+            try:
+                f = feat.compute_features(df, self.cfg.signal, self.cfg.asset_class.trading_days_per_year)
+                row = f.iloc[-1].to_dict()
+                row["conviction"] = sig.conviction_from_row(row, self.cfg.signal)
+                row["thesis"] = sig.explain(row, self.cfg.signal)
+                last[s] = row
+            except Exception as e:
+                self._alert(now, "feature_error", f"{s}: {str(e)[:200]}")
+                log.warning("feature computation failed for %s: %s", s, e)
+                continue
 
         prices = {s: float(r["close"]) for s, r in last.items()}
 
@@ -476,8 +488,10 @@ class Engine:
                     existing_plan=Plan(r["thesis"], self.stops.get(s, price), "") if purpose == "increase" else None,
                 )
                 invalidation = f"conviction drops below 0.3 or close falls below SMA"
+                # Idempotency: purpose is state-dependent (entry vs increase), so exclude from order ID.
+                # decision_id + symbol + side + seq is already unique per order.
                 req = OrderRequest(
-                    client_order_id=rk.make_client_order_id(self.scope, did, s, "buy", purpose, seq=0),
+                    client_order_id=rk.make_client_order_id(self.scope, did, s, "buy", seq=0),
                     decision_id=did,
                     symbol=s,
                     side="buy",
@@ -490,8 +504,9 @@ class Engine:
 
             # Delta < 0 and target == 0: sell all (exit)
             elif delta < 0 and t.weight == 0 and pos and pos.qty > 0:
+                # Idempotency: purpose is state-dependent, so exclude from order ID.
                 req = OrderRequest(
-                    client_order_id=rk.make_client_order_id(self.scope, did, s, "sell", "exit", seq=0),
+                    client_order_id=rk.make_client_order_id(self.scope, did, s, "sell", seq=0),
                     decision_id=did,
                     symbol=s,
                     side="sell",
@@ -505,8 +520,9 @@ class Engine:
             # Delta < 0 and target > 0: partial sell (exit)
             elif delta < 0 and t.weight > 0 and pos and pos.qty > 0:
                 qty = abs(delta) / price
+                # Idempotency: purpose is state-dependent, so exclude from order ID.
                 req = OrderRequest(
-                    client_order_id=rk.make_client_order_id(self.scope, did, s, "sell", "exit", seq=0),
+                    client_order_id=rk.make_client_order_id(self.scope, did, s, "sell", seq=0),
                     decision_id=did,
                     symbol=s,
                     side="sell",
@@ -614,29 +630,22 @@ class Engine:
 
         # Persist stops to ledger
         self.ledger.snapshot_positions(
-            positions, self.stops, self.entry_ids, now
+            list(positions.values()), self.stops, self.entry_ids, now
         )
 
         # Step 11: Ghost book. Seed if needed, execute trades, persist.
+        # Ghost book logic (spec section 'THE GHOST BOOK'):
+        # - Shadow mode: real book buys everything; ghost applies vetoes (skips vetoed buys)
+        # - Active mode: real book skips vetoed; ghost adds them back (executes all including vetoed)
+        # - Off mode: ghost mirrors real exactly
         self.ghost.ensure_seeded(state.equity, list(positions.values()), prices)
-        for req, _, _ in sells:
+        for req, _ in sells:
             self.ghost.submit(req)
         for req, cand, _ in buys:
-            if cand.symbol not in vetoed_symbols or self.cfg.llm_filter.mode != "active":
-                self.ghost.submit(req)
-        # In shadow mode, ghost skips vetoed buys (already not in buys list for active)
-        # So for shadow, we just submitted all reals; ghost is the counterfactual
-        # Actually: in shadow, real book gets vetoed removed by filter; ghost gets all
-        # So ghost needs to track which ones were vetoed and add them back
-        # Re-read spec: "In shadow mode the counterfactual is what if the vetoes had been applied"
-        # So shadow: real has vetoed removed (but we're NOT removing, filter is veto-only)
-        # Actually, re-reading the spec more carefully:
-        # "In active mode remove vetoed buys from the real order list" (step 8, we do this)
-        # "In shadow mode change nothing real" (we don't remove)
-        # Ghost: "In shadow mode the counterfactual is what if the vetoes had been applied"
-        # So ghost should remove them, real keeps them. But we're not tracking this in ghost.
-        # For now, ghost = real for off/active, and for shadow we'll mark it separately
-        # This is a small refinement; the ghost book will be good-enough for now
+            # Ghost skips a vetoed buy only in shadow mode (the counterfactual applies the veto)
+            if cand.symbol in vetoed_symbols and self.cfg.llm_filter.mode == "shadow":
+                continue
+            self.ghost.submit(req)
         self.ghost.mark(prices, now)
         self.ghost.persist(now)
 
@@ -714,7 +723,7 @@ class Engine:
                 if pos and pos.qty > 0:
                     req = OrderRequest(
                         client_order_id=rk.make_client_order_id(
-                            self.scope, f"stop-{symbol}-{now.timestamp()}", symbol, "sell", "stop", seq=0
+                            self.scope, f"stop-{symbol}-{now.timestamp()}", symbol, "sell", seq=0
                         ),
                         decision_id="",
                         symbol=symbol,
@@ -816,8 +825,12 @@ class Engine:
                 res.still_open.append(cid)
 
         # For each broker order not in the ledger: alert (never adopt silently)
+        now = utcnow()
         for broker_order in self.broker.open_orders():
             if not self.ledger.order(broker_order.client_order_id):
                 res.unknown_broker_orders.append(broker_order.client_order_id)
+                self._alert(now, "unknown_broker_order",
+                           f"Found unknown broker order {broker_order.client_order_id}: "
+                           f"{broker_order.symbol} {broker_order.side} (not in ledger)")
 
         return res

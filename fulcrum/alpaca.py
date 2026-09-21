@@ -720,6 +720,28 @@ class AlpacaData:
 
     __str__ = __repr__
 
+    def latest_prices(self, symbols: list[str]) -> dict[str, Quote]:
+        """Latest printed trade per symbol in one call (D-010), for the 15-minute stop check.
+        A symbol the venue does not price is left out, never guessed."""
+        wanted = [s for s in symbols if s]
+        if not wanted:
+            return {}
+        url = f"{self.data_url}/v1beta3/crypto/us/latest/trades"
+        body = self._api.get_json(url, params={"symbols": ",".join(wanted)})
+        trades = body.get("trades") if isinstance(body, dict) else None
+        out: dict[str, Quote] = {}
+        if not isinstance(trades, dict):
+            return out
+        for sym in wanted:
+            t = trades.get(sym)
+            if not isinstance(t, dict):
+                continue
+            ts = parse_rfc3339(t.get("t"), f"trade[{sym}].t")
+            if ts is None or t.get("p") is None:
+                continue
+            out[sym] = Quote(symbol=sym, price=_req_float(t.get("p"), f"trade[{sym}].p"), ts=ts)
+        return out
+
     def bars(self, symbols: list[str], start: datetime, end: datetime | None = None,
              timeframe: str = "1Day") -> dict[str, list[Bar]]:
         """Paginate with page_token until the response stops handing one back.

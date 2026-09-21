@@ -25,25 +25,28 @@ from tests.conftest import utc
 
 
 def test_make_client_order_id_deterministic():
-    """Same inputs produce same ID."""
-    id1 = make_client_order_id("run1", "dec1", "BTC", "buy", "entry", 0)
-    id2 = make_client_order_id("run1", "dec1", "BTC", "buy", "entry", 0)
+    """Same inputs produce same ID.
+
+    Purpose excluded from key: state-dependent (entry vs increase) and defeats crash-rerun idempotency.
+    """
+    id1 = make_client_order_id("run1", "dec1", "BTC", "buy", 0)
+    id2 = make_client_order_id("run1", "dec1", "BTC", "buy", 0)
 
     assert id1 == id2
 
 
 def test_make_client_order_id_different_on_seq():
     """Different seq produces different ID."""
-    id1 = make_client_order_id("run1", "dec1", "BTC", "buy", "entry", 0)
-    id2 = make_client_order_id("run1", "dec1", "BTC", "buy", "entry", 1)
+    id1 = make_client_order_id("run1", "dec1", "BTC", "buy", 0)
+    id2 = make_client_order_id("run1", "dec1", "BTC", "buy", 1)
 
     assert id1 != id2
 
 
 def test_make_client_order_id_truncation():
     """Truncation to max_len works (default 48 is well under SHA1's 40 chars)."""
-    id_default = make_client_order_id("run1", "dec1", "BTC", "buy", "entry", 0)
-    id_short = make_client_order_id("run1", "dec1", "BTC", "buy", "entry", 0, max_len=20)
+    id_default = make_client_order_id("run1", "dec1", "BTC", "buy", 0)
+    id_short = make_client_order_id("run1", "dec1", "BTC", "buy", 0, max_len=20)
 
     assert len(id_short) == 20
     assert id_default.startswith(id_short)

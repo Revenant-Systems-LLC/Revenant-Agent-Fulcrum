@@ -668,21 +668,34 @@ def test_sizes_stay_sane_when_volatility_is_odd():
 
 
 def test_order_ids_are_repeatable_and_a_sensible_length():
-    """Same decision, same id, so a crash and restart cannot buy twice."""
-    first = make_client_order_id("scope", "decision-1", SYMBOL, "buy", "entry", 0)
-    again = make_client_order_id("scope", "decision-1", SYMBOL, "buy", "entry", 0)
+    """Same decision, same id, so a crash and restart cannot buy twice.
+
+    Test corrected: this file still called ``make_client_order_id`` with a ``purpose``
+    argument after that parameter was removed from ``fulcrum.risk``. Passing "entry"
+    positionally landed in ``seq`` and 0 landed in ``max_len``, so every id came back as
+    the empty string and the length check failed. The key is now scope, decision_id,
+    symbol, side and seq, because a buy's purpose flips between entry and increase
+    depending on whether a position already exists, which would hand the same decision
+    two different ids across a crash and let it buy twice. The old "increase" row is
+    gone from the list below for that reason; the rest of the assertions are unchanged.
+    """
+    first = make_client_order_id("scope", "decision-1", SYMBOL, "buy", 0)
+    again = make_client_order_id("scope", "decision-1", SYMBOL, "buy", 0)
     assert first == again
     assert 0 < len(first) <= 48
     assert first.isalnum()
 
+    # A buy and an increase for one decision deliberately share an id: that is what
+    # stops a restart from submitting the same purchase a second time.
+    assert make_client_order_id("scope", "decision-1", SYMBOL, "buy", 0) == first
+
     different = [
-        make_client_order_id("other", "decision-1", SYMBOL, "buy", "entry", 0),
-        make_client_order_id("scope", "decision-2", SYMBOL, "buy", "entry", 0),
-        make_client_order_id("scope", "decision-1", "ETH/USD", "buy", "entry", 0),
-        make_client_order_id("scope", "decision-1", SYMBOL, "sell", "entry", 0),
-        make_client_order_id("scope", "decision-1", SYMBOL, "buy", "increase", 0),
-        make_client_order_id("scope", "decision-1", SYMBOL, "buy", "entry", 1),
-        make_client_order_id("scope", "decision-1", SYMBOL, "buy", "entry", -1),
+        make_client_order_id("other", "decision-1", SYMBOL, "buy", 0),
+        make_client_order_id("scope", "decision-2", SYMBOL, "buy", 0),
+        make_client_order_id("scope", "decision-1", "ETH/USD", "buy", 0),
+        make_client_order_id("scope", "decision-1", SYMBOL, "sell", 0),
+        make_client_order_id("scope", "decision-1", SYMBOL, "buy", 1),
+        make_client_order_id("scope", "decision-1", SYMBOL, "buy", -1),
     ]
     assert len(set(different)) == len(different)
     assert first not in different
