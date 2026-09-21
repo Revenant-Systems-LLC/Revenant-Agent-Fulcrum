@@ -56,5 +56,9 @@ Plan: `docs/PLAN.md`. Spec: `BUILD-PROMPT.md`. Judgment calls: `docs/DECISIONS.m
 - [ ] Credential handling and secret hygiene
 - [ ] Findings fixed or declined with reasons; all tests rerun
 
-## Review
-(filled at the end)
+## Review (2026-09-21 14:15)
+Everything above is built and committed except the items only Dave can do (HANDOFF steps 1 to 8).
+579 tests green. Backtest run for real; verdict in docs/BACKTEST.md (rules Sharpe 1.11 vs BTC 1.18
+over 2023 to 2026, drawdown 12.6% vs 53.1%; not tuned). Four adversarial suites are part of the
+test set now. Open follow-ups: ghost book drift on long runs (ghost_order_failed alerts); the
+volatility-target split keeps exposure near 13% (Dave's config call); last commit not pushed.
