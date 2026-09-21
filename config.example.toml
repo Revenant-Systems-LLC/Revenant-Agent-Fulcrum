@@ -82,5 +82,6 @@ enabled = true
 
 [data]
 cache_dir = "data/bars"
-# Historical (backtest) source is chosen and verified during build; see docs/DECISIONS.md.
-historical_source = "REPLACE_AFTER_VERIFICATION"
+# Where past prices come from for the history test. "coinbase" (Coinbase Exchange public
+# candles, USD, primary) or "binance_vision" (Binance bulk files, USDT, fallback). See D-011.
+historical_source = "coinbase"

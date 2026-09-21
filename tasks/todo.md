@@ -8,36 +8,38 @@ Plan: `docs/PLAN.md`. Spec: `BUILD-PROMPT.md`. Judgment calls: `docs/DECISIONS.m
 - [x] venv at ./venv, direct deps installed
 - [x] .gitignore (Nomos baseline + runtime)
 - [x] requirements.in
-- [ ] requirements.txt pinned from freeze
-- [ ] config.example.toml (draft written; fill VERIFY values after doc check)
-- [ ] detect-secrets baseline + pre-commit hook (repo-local, no global installs)
-- [ ] git init + first commit
+- [x] requirements.txt pinned from freeze
+- [x] config.example.toml (VERIFY values confirmed by D-009; fee 15/25 bps tier 1)
+- [x] detect-secrets baseline + pre-commit hook (repo-local, no global installs; blocked one false positive, fixed the cause)
+- [x] git init + first commit 78da09d; second e298b39
 
 ## 2. Foundations (sequential, main thread)
-- [ ] fulcrum/models.py
-- [ ] fulcrum/config.py + tests
-- [ ] fulcrum/ledger.py + tests
-- [ ] fulcrum/broker.py: Broker protocol + FakeBroker + tests
-- [ ] fulcrum/llm_filter.py: Filter protocol + FakeFilter
-- [ ] fulcrum/notify.py: Notifier protocol + FakeNotifier
-- [ ] fulcrum/creds.py (DPAPI loader, never logs values)
+- [x] fulcrum/models.py
+- [x] fulcrum/config.py + tests
+- [x] fulcrum/ledger.py + tests
+- [x] fulcrum/broker.py: Broker protocol + FakeBroker + tests
+- [x] fulcrum/llm_filter.py: Filter protocol + FakeFilter
+- [x] fulcrum/notify.py: Notifier protocol + FakeNotifier
+- [x] fulcrum/creds.py (DPAPI loader, never logs values)
 
-## 3. Live-doc verification (workflow wf_fb6fc303-25c, background)
-- [ ] Alpaca orders/fees/idempotency facts into DECISIONS.md
-- [ ] Alpaca market data facts into DECISIONS.md
-- [ ] Backtest data source chosen and terms recorded
-- [ ] March 2026 stress window + regimes recorded
+## 3. Live-doc verification (workflow wf_fb6fc303-25c, done, 8 agents, all claims confirmed by re-read)
+- [x] Alpaca orders/fees/idempotency facts into DECISIONS.md (D-009)
+- [x] Alpaca market data facts into DECISIONS.md (D-010)
+- [x] Backtest data source chosen and terms recorded (D-011: Coinbase primary, Binance Vision fallback)
+- [x] Stress window + regimes recorded (D-012: report's "March 2026" is misdated; crash was Feb 2026)
 
 ## 4. Parallel modules (against section-2 interfaces)
-- [ ] features.py + signal.py + sizing.py + risk.py with property tests
-- [ ] data.py HistoricalSource + backtest.py + lookahead guard test
-- [ ] AlpacaBroker (paper-only lock) + AlpacaData with recorded-HTTP tests
-- [ ] scheduler.py (reconcile, stop tick, kill tick) + TelegramNotifier
+- [x] features.py + signal.py + sizing.py + risk.py with property tests (53 tests)
+- [ ] data.py HistoricalSource (agent running)
+- [ ] backtest.py + report.py + lookahead guard test
+- [ ] AlpacaBroker (paper-only lock) + AlpacaData with recorded-HTTP tests (agent running)
+- [ ] engine.py (agent rewriting after an interrupted write) then scheduler.py + telegram.py
+- [ ] adversarial tests over the risk layer (agent running)
 
 ## 5. Filter and measurement
-- [ ] Load claude-api skill; ClaudeFilter with strict JSON, fail-open, injection tags
-- [ ] Ghost book accounting in both modes
-- [ ] Shadow-mode daily hypothetical run
+- [x] Load claude-api skill; ClaudeFilter with strict JSON, fail-open, injection tags (model claude-opus-5)
+- [ ] Ghost book accounting in both modes (in engine)
+- [ ] Shadow-mode daily hypothetical run (in scheduler)
 
 ## 6. CLI and docs (layman-usable, D-013)
 - [ ] cli: backtest | run | status | report | selftest, every screen in plain sentences

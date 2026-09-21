@@ -314,7 +314,10 @@ class DataConfig:
     def parse(d: dict) -> "DataConfig":
         s = "data"
         _no_unknown(d, {"cache_dir", "historical_source"}, s)
-        return DataConfig(cache_dir=_req(d, "cache_dir", str, s), historical_source=_req(d, "historical_source", str, s))
+        src = _req(d, "historical_source", str, s)
+        if src not in ("coinbase", "binance_vision", "csv"):
+            raise ConfigError(f"[{s}].historical_source must be coinbase|binance_vision|csv, got {src!r}")
+        return DataConfig(cache_dir=_req(d, "cache_dir", str, s), historical_source=src)
 
 
 @dataclass(frozen=True, slots=True)
