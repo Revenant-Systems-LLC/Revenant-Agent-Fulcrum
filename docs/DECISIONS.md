@@ -75,3 +75,6 @@ Five defects found and fixed per the adversarial pass:
 4. **Trade cap filters on engine clock (decided_at), not wall clock**: Added `decided_at TEXT NOT NULL` column to orders table with schema migration (v1 to v2). `Ledger.record_order_intent` now requires `decided_at: datetime` parameter (the engine's decision time). `risk_increasing_orders_since` filters on `decided_at` instead of `created_at`, making the 24h cap work correctly in backtests with historical time. All callers of `record_order_intent` updated to pass `decided_at=now`.
 
 5. **Ghost book alerts on failure**: `GhostBook.submit` now accepts `ts: datetime | None` parameter and records `ledger.record_alert(ts, "ghost_order_failed", {symbol, reason})` on exception instead of only logging. This makes failed counterfactual trades visible in reports so the filter's measurement is not silently incomplete.
+
+## D-016 Paper account: Fulcrum2.0, the $1,000,000 one (Dave, 2026-09-21 14:38)
+Dave created two new Alpaca paper accounts, Fulcrum1.0 ($100k) and Fulcrum2.0 ($1M), and chose 2.0. The old bot's account is not accessible to him and is not used. Consequence: nothing in the code depends on account size; the 5% per-order clamp is $50,000 at this size, under Alpaca's $200,000 per-order cap (D-009). Backtest comparisons are percent-based and unaffected. Only the 2.0 keys go into `alpaca_agent.cred`.
