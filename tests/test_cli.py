@@ -336,7 +336,7 @@ def test_selftest_every_check_line_ends_in_ok_when_all_is_well(cfg):
     check_lines = [line for line in rec.lines if line.endswith(": ok")]
     # config, ledger, three credentials, fake broker, risk gate, filter parser,
     # paper lock, message templates: ten checks in all.
-    assert len(check_lines) == 10, rec.text
+    assert len(check_lines) == 11, rec.text  # 11 since the secret-scan hook check was added (security review)
 
 
 def test_selftest_fails_and_names_the_missing_credential_file(cfg):

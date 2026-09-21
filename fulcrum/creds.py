@@ -21,6 +21,7 @@ CRED_FILES = {
     "telegram": "telegram_agent.cred",  # UserName = chat id, Password = bot token
 }
 FORBIDDEN_NAMES = {"alpaca.cred", "xai.cred", "telegram.cred", "coingecko.cred"}  # the old bot's files
+FORBIDDEN_DIRS = {".openclaw", ".hermes"}  # the old bot's homes; a creds_dir inside them is refused
 
 
 class CredentialError(RuntimeError):
@@ -44,7 +45,15 @@ def cred_path(creds_dir: str, service: str) -> Path:
     name = CRED_FILES[service]
     if name in FORBIDDEN_NAMES:
         raise CredentialError("refusing to read the old bot's credential file")
-    return Path(os.path.expandvars(os.path.expanduser(creds_dir))) / name
+    # Directory firewall (found by the security review): the config value must not walk out of
+    # the Fulcrum credential folder or into the old bot's home. File-name firewall alone is not enough.
+    raw = Path(creds_dir)
+    if ".." in raw.parts:
+        raise CredentialError("creds_dir must not contain '..'")
+    root = Path(os.path.expandvars(os.path.expanduser(creds_dir))).resolve()
+    if any(part.lower() in FORBIDDEN_DIRS for part in root.parts):  # never read the old bot's home
+        raise CredentialError("creds_dir must not point into the old bot's folders")
+    return root / name
 
 
 def load_credential(creds_dir: str, service: str, *, runner=subprocess.run) -> Credential:

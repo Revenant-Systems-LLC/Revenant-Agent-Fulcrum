@@ -292,10 +292,6 @@ class KillSwitch:
         bool
             True if reset was applied, False otherwise (not tripped, file missing, or already consumed).
         """
-        # Only reset if currently tripped.
-        if not self.tripped():
-            return False
-
         # Check if reset file exists.
         if not self.reset_file.exists():
             return False
@@ -305,6 +301,21 @@ class KillSwitch:
 
         # Check if this file has already been consumed.
         if self.ledger.reset_already_consumed(file_mtime_ns):
+            return False
+
+        state = self.ledger.kill_state()
+        if not bool(state["tripped"]):
+            # A reset file lying around BEFORE a trip must not cancel that trip the instant it
+            # happens (found by the end-to-end review). Record it as spent and do nothing.
+            self.ledger.mark_reset_consumed(file_mtime_ns)
+            self.ledger.record_kill_event(ts, "check", None, None, "reset file seen while not tripped; ignored")
+            return False
+
+        # The file must postdate the trip it is meant to clear.
+        tripped_at = _as_dt(state["tripped_at"])
+        if tripped_at is not None and file_mtime_ns <= int(tripped_at.timestamp() * 1e9):
+            self.ledger.mark_reset_consumed(file_mtime_ns)
+            self.ledger.record_kill_event(ts, "check", None, None, "reset file older than the trip; ignored")
             return False
 
         # Apply reset: clear tripped, set hwm to current equity, record event.

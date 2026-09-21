@@ -591,6 +591,25 @@ def _check_message_templates(now: datetime, cfg: Config) -> Check:
     return Check(label, True)
 
 
+def _check_secret_scan_hook(repo_root: Path | None = None) -> Check:
+    """The pre-commit secret scan is a plain git hook that a fresh clone does not carry.
+    Nothing else would notice it missing, so the setup check does (security review)."""
+    label = "Secret scan runs before every commit"
+    root = repo_root or Path(__file__).resolve().parent.parent
+    hook = root / ".git" / "hooks" / "pre-commit"
+    if not (root / ".git").exists():
+        return Check(label, True, "this folder is not a git checkout, so there is nothing to commit.")
+    if not hook.exists():
+        return Check(label, False, r"the hook is not installed. Run scripts\Install-Hooks.ps1 once, then check again.")
+    try:
+        text = hook.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return Check(label, False, "the hook file could not be read.")
+    if "detect-secrets" not in text:
+        return Check(label, False, r"the installed hook is not the secret scan. Run scripts\Install-Hooks.ps1.")
+    return Check(label, True)
+
+
 def _filter_preview_lines(cfg: Config, now: datetime) -> list[str]:
     """What would be sent to the AI filter, shortened so the screen stays readable."""
     symbol = cfg.universe.core[0]
@@ -658,6 +677,7 @@ def cmd_selftest(cfg: Config, deps: Deps, config_note: str | None = None) -> int
     checks.append(_check_filter_contract(cfg))
     checks.append(_check_paper_lock(cfg))
     checks.append(_check_message_templates(now, cfg))
+    checks.append(_check_secret_scan_hook())
 
     for check in checks:
         out(check.line())

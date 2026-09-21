@@ -67,6 +67,10 @@ From the research report: at least 90 days of paper trading across a trending an
 - Paper trading may or may not simulate Alpaca's crypto fees; Fulcrum models fees itself (0.25% taker) so results are honest either way.
 - The research report's "March 2026 stress window" does not match primary sources; the crash was February 2026. See `docs/DECISIONS.md` D-012.
 
+## The secret scan, and how not to defeat it
+
+Every commit runs `detect-secrets` over the staged files through `.git/hooks/pre-commit`. If it blocks, the block stands: fix the cause. Three things defeat it silently, and none of them is allowed here: `git commit --no-verify` (or `-n`), pointing `core.hooksPath` elsewhere, and a fresh clone where nobody ran `scripts\Install-Hooks.ps1` (the hook is not tracked by git; `selftest` tells you if it is missing). Nomos Logos GitHub SOP Part 1 applies: no secret ever enters this repo.
+
 ## Where things are
 
 - `docs/PLAN.md`: the build plan Dave approved.

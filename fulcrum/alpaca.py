@@ -385,7 +385,7 @@ class _ApiClient:
                 status, body, headers = self._transport.request(
                     method, url, headers=self._headers(), params=params, json_body=json_body,
                     timeout=self._timeout)
-            except requests.RequestException as e:
+            except Exception as e:  # noqa: BLE001  any transport failure means order state unknown (security review)
                 # Never retried, on any method. See the module docstring.
                 raise BrokerError(
                     f"{method} {urlsplit(url).path}: transport failure ({type(e).__name__}); "

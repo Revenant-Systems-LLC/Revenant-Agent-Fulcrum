@@ -36,7 +36,7 @@ On start, reconcile walks every ledger order without a terminal status and asks 
 - Crypto order types: market, limit, stop_limit only. time_in_force: gtc, ioc only. Plain stop and trailing_stop are not accepted for crypto, which confirms D-002 (synthetic stops). https://docs.alpaca.markets/us/reference/postorder
 - Per-symbol `min_order_size`, `min_trade_increment`, `price_increment` come from GET /v2/assets (crypto-only fields). Per-order maximum $200k notional. Read at startup, never hardcode. https://docs.alpaca.markets/us/reference/get-v2-assets-1
 - `client_order_id`: max 128 chars; duplicate against an active order returns HTTP 422 "client_order_id must be unique". Lookup: GET /v2/orders:by_client_order_id?client_order_id=... (colon in the path). https://docs.alpaca.markets/us/reference/getorderbyclientorderid
-- Paper base URL https://paper-api.alpaca.markets; live https://api.alpaca.markets. The live string appears nowhere in this codebase except as the thing the lock test asserts is rejected.
+- Paper base URL https://paper-api.alpaca.markets; live https://api.alpaca.markets. The live string appears nowhere in this codebase except in this line and in the lock test that asserts it is rejected.
 - Spot crypto cannot be shorted or bought on margin; sizing reads `non_marginable_buying_power`. https://docs.alpaca.markets/us/docs/crypto-trading
 - Trading API limit 200 requests/minute/account, HTTP 429 on breach. https://alpaca.markets/support/usage-limit-api-calls
 
