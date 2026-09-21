@@ -1,0 +1,16 @@
+#!/bin/sh
+# Fulcrum pre-commit hook: secret scan on every staged file.
+# Nomos Logos GitHub SOP Part 1, item 4: if the scanner blocks, the block stands. Do not bypass.
+# Installed into .git/hooks by scripts/Install-Hooks.ps1 (tracked copy lives in scripts/hooks/).
+set -e
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+HOOK="$REPO_ROOT/venv/Scripts/detect-secrets-hook.exe"
+if [ ! -f "$HOOK" ]; then
+  echo "pre-commit: $HOOK not found. Create the venv and install requirements.txt first. Commit refused."
+  exit 1
+fi
+FILES="$(git diff --cached --name-only --diff-filter=ACM)"
+if [ -z "$FILES" ]; then
+  exit 0
+fi
+echo "$FILES" | tr '\n' '\0' | xargs -0 "$HOOK" --baseline "$REPO_ROOT/.secrets.baseline"

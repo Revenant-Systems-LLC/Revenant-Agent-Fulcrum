@@ -1,0 +1,37 @@
+# Secrets (Nomos Logos GitHub SOP Part 1 baseline; rules may exceed usage)
+.env
+*.env
+Secrets.env
+**/secrets/**
+**/keys/**
+*.key
+*.pem
+*.cred
+config.local.*
+config.toml
+
+# Runtime state and data
+venv/
+data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+logs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.hypothesis/
+.coverage
+htmlcov/
+
+# Editors / OS / agent-local settings
+.claude/settings.local.json
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

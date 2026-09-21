@@ -1,0 +1,82 @@
+# Revenant Agent Fulcrum v1 configuration.
+# Copy to config.toml (git-ignored) and edit. Every number here is a DEFAULT from
+# BUILD-PROMPT.md unless noted; the engine validates all of it at startup and
+# refuses to run on any bad value.
+
+[run]
+# "dry_run": FakeBroker on live Alpaca market data (no orders leave the machine).
+# "paper":   AlpacaBroker against the paper endpoint. There is no live mode and
+#            no key that enables one; going live is a reviewed code change.
+mode = "dry_run"
+# Where the SQLite ledger lives (relative to repo root unless absolute).
+ledger_path = "data/fulcrum.sqlite"
+# Where DPAPI .cred files live. The bot never writes here.
+creds_dir = "~/.fulcrum"
+# Kill-switch reset file. Dave creates it by hand; the bot only reads and consumes it.
+kill_reset_file = "~/.fulcrum/agent_kill_reset"
+log_level = "INFO"
+
+[asset_class]
+# Everything asset-class specific lives here so a phase-2 ETF sleeve is config, not a rewrite.
+name = "crypto"
+trading_days_per_year = 365       # annualization factor
+calendar = "24x7"                 # "24x7" or "us_equities"
+taker_fee_bps = 25.0              # VERIFY against Alpaca's current crypto fee schedule before paper
+maker_fee_bps = 15.0              # VERIFY
+slippage_bps = 10.0               # modeled slippage per fill (DEFAULT)
+min_notional_usd = 10.0           # VERIFY per symbol from Alpaca assets endpoint
+quote_currency = "USD"
+
+[universe]
+# Long or flat only. No stablecoins. Hard cap 8.
+core = ["BTC/USD", "ETH/USD", "SOL/USD"]
+max_symbols = 8
+# Liquidity screen for the optional extra symbols (documented in README):
+# 30-day median daily USD volume on the historical source must exceed this.
+min_median_daily_volume_usd = 50000000.0
+candidates = ["LINK/USD", "AVAX/USD", "XRP/USD", "DOGE/USD", "LTC/USD", "ADA/USD", "DOT/USD", "UNI/USD"]
+
+[signal]
+lookbacks_days = [7, 14, 21, 28]
+trend_filter_ma_days = 50
+vol_window_days = 30
+atr_window_days = 14
+
+[sizing]
+portfolio_vol_target = 0.20       # annualized
+max_weight_per_asset = 0.15
+max_gross_exposure = 0.60
+no_trade_band_pct_equity = 0.02
+
+[risk]
+max_order_pct_equity = 0.05       # order clamp; larger changes split across ticks
+max_trades_per_24h = 10           # exits and stops exempt
+stop_atr_multiple = 2.5           # hard stop below entry, ratchets up only
+kill_switch_drawdown = 0.15       # from equity high-water mark
+fee_budget_annual_pct_equity = 0.03
+slippage_alarm_multiple = 2.0
+stale_bar_max_age_minutes = 180   # newest daily bar older than this: do nothing, alert
+
+[schedule]
+rebalance_weekday = "monday"      # UTC
+rebalance_hour_utc = 1
+tick_minutes = 15
+
+[llm_filter]
+# "off" | "shadow" | "active". v1 ships in shadow. Dave flips this one value on day 7.
+mode = "shadow"
+model = "REPLACE_WITH_MODEL_ID"   # set from the claude-api skill during build; never from memory
+timeout_seconds = 30
+max_tokens = 1024
+# In shadow mode also run the filter once a day against the hypothetical candidate list.
+shadow_daily_hour_utc = 2
+
+[notify]
+enabled = true
+# Telegram chat id is NOT a secret but lives with the token in telegram_agent.cred.
+# Nothing in this file is a credential.
+
+[data]
+cache_dir = "data/bars"
+# Historical (backtest) source is chosen and verified during build; see docs/DECISIONS.md.
+historical_source = "REPLACE_AFTER_VERIFICATION"

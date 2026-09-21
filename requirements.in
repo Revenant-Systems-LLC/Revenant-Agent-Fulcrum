@@ -1,0 +1,8 @@
+# Direct dependencies only. Each one earns its place; see docs/DECISIONS.md.
+# requirements.txt is the fully pinned lock generated from this file's venv.
+pandas          # bar frames, rolling windows, resampling
+numpy           # vectorized math under pandas
+requests        # HTTP for Alpaca, Anthropic-free public data, Telegram
+anthropic       # the veto-only LLM filter (ClaudeFilter)
+pytest          # tests
+detect-secrets  # pre-commit secret scan (Nomos GitHub SOP Part 1 item 4)
