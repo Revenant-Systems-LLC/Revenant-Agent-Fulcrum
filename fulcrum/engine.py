@@ -299,7 +299,20 @@ class Engine:
         if not self.ledger.record_order_intent(req, decided_at=now):
             existing = self.ledger.order(req.client_order_id)
             return False, f"already acted on (status {existing['status']})"
+        return self._send(req, decision_price, now)
 
+    def _resubmit_same_id(self, req: OrderRequest, decision_price: float, now: datetime) -> bool:
+        """Resend an order whose ledger row exists in status unknown and whose venue lookup
+        returned nothing. Same client id on purpose: the venue can refuse a duplicate, and
+        a fresh id could not be refused. Only the stop path uses this, after reconciling."""
+        row = self.ledger.order(req.client_order_id)
+        if row is None or row["status"] not in ("unknown", "new"):
+            return False
+        self.ledger.update_order(req.client_order_id, "new", note="resend after venue reported no record")
+        submitted, _note = self._send(req, decision_price, now)
+        return submitted
+
+    def _send(self, req: OrderRequest, decision_price: float, now: datetime) -> tuple[bool, str]:
         try:
             ack = self.broker.submit(req)
         except DuplicateOrderError:
@@ -758,11 +771,22 @@ class Engine:
                             # Check broker for actual status
                             broker_order = self.broker.order_by_client_id(prior_stop["client_order_id"])
                             if broker_order is None:
-                                # Never reached the venue, mark rejected and will retry
-                                self.ledger.update_order(prior_stop["client_order_id"], "rejected",
-                                                       note="never reached venue")
-                                should_submit = True
-                                break  # Exit the loop to retry submission
+                                # The venue has no record of it. Resend under the SAME client id: if
+                                # the venue really never got it, this is the first copy it sees; if it
+                                # did get it and the lookup lied, the venue refuses the duplicate and
+                                # the row goes back to unknown for the next tick. Either way the venue
+                                # can never hold two live stops for one position.
+                                retry = OrderRequest(
+                                    client_order_id=prior_stop["client_order_id"], decision_id=entry_id,
+                                    symbol=symbol, side="sell", purpose="stop", qty=pos.qty)
+                                if self._resubmit_same_id(retry, prices[symbol], now):
+                                    res.stops_fired.append(symbol)
+                                    del self.stops[symbol]
+                                    try:
+                                        self.notifier.send(ntf.msg_stop(now, symbol, prices[symbol], stop_price, pos.qty))
+                                    except Exception as e:  # noqa: BLE001
+                                        log.warning("notify failed: %s", e)
+                                break  # one attempt per tick
                             elif broker_order.filled_qty > 0 or broker_order.status == "filled":
                                 # Already filled, record and stop here
                                 if broker_order.filled_qty > 0:
@@ -790,8 +814,11 @@ class Engine:
 
                     # Submit a stop if we should (no non-terminal orders, or one was rejected)
                     if should_submit and symbol in self.stops:
-                        # Retry with seq=0 (the same ID as the first attempt) for idempotency
-                        seq = 0
+                        # seq = number of prior attempts. A fresh attempt only happens after the venue
+                        # confirmed the earlier one never arrived (or none exists), so the venue sees
+                        # exactly one live stop per position. Reusing seq 0 would collide with the
+                        # ledger row of the failed attempt and skip the stop silently.
+                        seq = len(prior_stops)
                         client_id = rk.make_client_order_id(
                             self.scope, entry_id, symbol, "sell", seq=seq
                         )
