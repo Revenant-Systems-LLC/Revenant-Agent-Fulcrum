@@ -489,8 +489,14 @@ def describe_cycle(cycle: Any) -> list[str]:
     if vetoed:
         lines.append("The safety filter blocked these buys: " + ", ".join(vetoed) + ".")
     rejected = getattr(cycle, "rejected", ()) or ()
-    if rejected:
-        lines.append(f"{len(rejected)} order(s) were held back by the risk limits.")
+    already = [r for r in rejected if "already acted on" in str(r[1])]
+    limits = [r for r in rejected if r not in already]
+    if already:
+        lines.append(f"{len(already)} order(s) were skipped because this week's decision was already carried out "
+                     "in an earlier run. The same decision is never sent twice.")
+    if limits:
+        reasons = sorted({str(r[1]).split(":")[0] for r in limits})
+        lines.append(f"{len(limits)} order(s) were held back by the risk limits ({', '.join(reasons)}).")
     return lines
 
 

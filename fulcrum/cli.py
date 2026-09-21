@@ -727,7 +727,16 @@ def cmd_run(cfg: Config, deps: Deps, *, once: bool, dry_run_flag: bool,
     for note in stack.notes:
         out(note)
 
-    ledger = deps.open_ledger(cfg)
+    if dry_run:
+        # A practice run is a throwaway: its own ledger file, so two practice runs in one week
+        # never collide on the same weekly decision, and the real paper record stays clean.
+        practice_dir = resolve_path(cfg, cfg.run.ledger_path).parent / "practice"
+        practice_dir.mkdir(parents=True, exist_ok=True)
+        stamp = now.strftime("%Y%m%d-%H%M%S")
+        ledger = Ledger(practice_dir / f"practice-{stamp}.sqlite")
+        out(f"This practice run keeps its own record in data\practice\practice-{stamp}.sqlite; the real paper record is untouched.")
+    else:
+        ledger = deps.open_ledger(cfg)
     try:
         engine = build_engine(cfg, deps, stack, ledger, now)
         scheduler = PrintingScheduler(

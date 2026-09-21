@@ -448,9 +448,15 @@ def test_run_once_prints_the_scheduler_summary_lines(cfg):
 
 
 def test_run_once_records_the_round_in_the_ledger(cfg):
+    # Changed 2026-09-21: a practice (dry_run) round now keeps its own throwaway ledger under
+    # data/practice/, so two practice rounds in one week never collide on the same weekly
+    # decision. The round is recorded there, not in the paper ledger.
     deps, rec, _ = make_deps(cfg)
     cli.cmd_run(cfg, deps, once=True, dry_run_flag=False)
-    ledger = Ledger(cli.resolve_path(cfg, cfg.run.ledger_path))
+    practice_dir = cli.resolve_path(cfg, cfg.run.ledger_path).parent / "practice"
+    files = sorted(practice_dir.glob("practice-*.sqlite"))
+    assert len(files) == 1, "one practice run, one practice ledger"
+    ledger = Ledger(files[0])
     counts = ledger.table_counts()
     ledger.close()
     assert counts["runs"] == 1

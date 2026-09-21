@@ -668,6 +668,7 @@ class Engine:
         # - Active mode: real book skips vetoed; ghost adds them back (executes all including vetoed)
         # - Off mode: ghost mirrors real exactly
         self.ghost.ensure_seeded(state.equity, list(positions.values()), prices)
+        self.ghost.mark(prices, now)  # the ghost book needs today's prices before it can fill anything
         # Sync stops to ghost book: the counterfactual runs with same stops as the real book
         self.ghost.stops = dict(self.stops)
         for req, _ in sells:
