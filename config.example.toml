@@ -15,6 +15,8 @@ creds_dir = "~/.fulcrum"
 # Kill-switch reset file. Dave creates it by hand; the bot only reads and consumes it.
 kill_reset_file = "~/.fulcrum/agent_kill_reset"
 log_level = "INFO"
+# Pretend dollars the practice cycle (menu 2) starts with. Paper mode uses the real paper account.
+practice_starting_cash = 1000000
 
 [asset_class]
 # Everything asset-class specific lives here so a phase-2 ETF sleeve is config, not a rewrite.

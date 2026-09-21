@@ -287,14 +287,14 @@ def default_build_stack(cfg: Config, *, dry_run: bool, deps: "Deps") -> Stack:
 
     if dry_run:
         broker: Any = FakeBroker(
-            starting_cash=DRY_RUN_PRETEND_DOLLARS,
+            starting_cash=cfg.run.practice_starting_cash,
             fee_bps=cfg.asset_class.taker_fee_bps,
             slippage_bps=cfg.asset_class.slippage_bps,
             min_notional_usd=cfg.asset_class.min_notional_usd,
         )
         notes.append(
             f"Practice mode. The pretend account starts with "
-            f"{ntf.fmt_money(DRY_RUN_PRETEND_DOLLARS)} and no order leaves this machine."
+            f"{ntf.fmt_money(cfg.run.practice_starting_cash)} and no order leaves this machine."
         )
     else:
         broker = AlpacaBroker(

@@ -58,11 +58,14 @@ class RunConfig:
     creds_dir: str
     kill_reset_file: str
     log_level: str
+    practice_starting_cash: float = 100_000.0
 
     @staticmethod
     def parse(d: dict) -> "RunConfig":
         s = "run"
-        _no_unknown(d, {"mode", "ledger_path", "creds_dir", "kill_reset_file", "log_level"}, s)
+        _no_unknown(d, {"mode", "ledger_path", "creds_dir", "kill_reset_file", "log_level", "practice_starting_cash"}, s)
+        cash = _opt(d, "practice_starting_cash", float, 100_000.0, s)
+        _in_range(cash, 1.0, 1e9, f"[{s}].practice_starting_cash")
         mode = _req(d, "mode", str, s)
         if mode not in ("dry_run", "paper"):
             raise ConfigError(f"[run].mode must be 'dry_run' or 'paper', got {mode!r}. There is no live mode.")
@@ -75,6 +78,7 @@ class RunConfig:
             creds_dir=_opt(d, "creds_dir", str, "~/.fulcrum", s),
             kill_reset_file=_opt(d, "kill_reset_file", str, "~/.fulcrum/agent_kill_reset", s),
             log_level=level,
+            practice_starting_cash=cash,
         )
 
 
