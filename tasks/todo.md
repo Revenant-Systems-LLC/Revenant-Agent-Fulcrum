@@ -39,8 +39,11 @@ Plan: `docs/PLAN.md`. Spec: `BUILD-PROMPT.md`. Judgment calls: `docs/DECISIONS.m
 - [ ] Ghost book accounting in both modes
 - [ ] Shadow-mode daily hypothetical run
 
-## 6. CLI and docs
-- [ ] cli: backtest | run | status | report | selftest
+## 6. CLI and docs (layman-usable, D-013)
+- [ ] cli: backtest | run | status | report | selftest, every screen in plain sentences
+- [ ] Start-Fulcrum.ps1 numbered menu (check setup, practice cycle, paper trading, status, report, history test)
+- [ ] README opens with plain-English "what it does / never does" + glossary
+- [ ] HANDOFF.md as a click-by-click checklist
 - [ ] selftest and one --dry-run cycle demonstrated
 - [ ] docs/BACKTEST.md (honest)
 - [ ] README.md, CLAUDE.md, Revenant_Progress_Report.md, docs/HANDOFF.md, Start-Fulcrum.ps1

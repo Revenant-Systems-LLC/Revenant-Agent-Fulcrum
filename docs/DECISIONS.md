@@ -25,3 +25,37 @@ The `pre-commit` framework installs hook environments under the user profile on 
 
 ## D-008 Ledger is the source of truth for the bot's own state; the broker is the source of truth for fills (2026-09-21)
 On start, reconcile walks every ledger order without a terminal status and asks the broker for it by client_order_id. Broker orders with no ledger row are logged as `alerts.kind = "unknown_order"` and never adopted silently.
+
+## D-009 Alpaca trading facts, verified against official docs 2026-09-21 (research + independent adversarial re-read, all confirmed)
+- Crypto fees, tier 1 (30-day volume under $100k): maker 0.15%, taker 0.25% (15 / 25 bps). https://docs.alpaca.markets/us/docs/crypto-fees
+- Fee is charged on the credited asset ("what you receive"): BTC on a BTC/USD buy, USD on a sell. Fees are calculated and posted end of day, not on the fill. Same page.
+- Whether PAPER simulates crypto fees is undocumented in either direction. Consequence: the ledger models fees itself from `taker_fee_bps` on every fill, in USD terms, and marks them modeled. https://docs.alpaca.markets/us/docs/paper-trading
+- Crypto order types: market, limit, stop_limit only. time_in_force: gtc, ioc only. Plain stop and trailing_stop are not accepted for crypto, which confirms D-002 (synthetic stops). https://docs.alpaca.markets/us/reference/postorder
+- Per-symbol `min_order_size`, `min_trade_increment`, `price_increment` come from GET /v2/assets (crypto-only fields). Per-order maximum $200k notional. Read at startup, never hardcode. https://docs.alpaca.markets/us/reference/get-v2-assets-1
+- `client_order_id`: max 128 chars; duplicate against an active order returns HTTP 422 "client_order_id must be unique". Lookup: GET /v2/orders:by_client_order_id?client_order_id=... (colon in the path). https://docs.alpaca.markets/us/reference/getorderbyclientorderid
+- Paper base URL https://paper-api.alpaca.markets; live https://api.alpaca.markets. The live string appears nowhere in this codebase except as the thing the lock test asserts is rejected.
+- Spot crypto cannot be shorted or bought on margin; sizing reads `non_marginable_buying_power`. https://docs.alpaca.markets/us/docs/crypto-trading
+- Trading API limit 200 requests/minute/account, HTTP 429 on breach. https://alpaca.markets/support/usage-limit-api-calls
+
+## D-010 Alpaca market data facts, verified 2026-09-21
+- Bars: GET https://data.alpaca.markets/v1beta3/crypto/us/bars?symbols=BTC/USD,...&timeframe=1Day&start=...&limit=10000, paginate with `page_token`. https://docs.alpaca.markets/reference/cryptobars-1
+- Stop-check price: GET https://data.alpaca.markets/v1beta3/crypto/us/latest/trades?symbols=... (one call for the whole book; a printed trade, not a quote). https://docs.alpaca.markets/reference/cryptolatesttrades-1
+- Historical crypto data is the documented exception to the auth requirement; the bot sends its paper keys anyway. https://docs.alpaca.markets/docs/about-market-data-api
+- The 1Day crypto bar boundary and time zone are UNDOCUMENTED, and so is history depth. The data layer records the observed bar timestamps and the observed first bar on first contact and writes them to the ledger alerts table as `data_probe`; nothing assumes UTC midnight until observed.
+- Rate limit for crypto data is not documented; budget under 200/min and back off on 429.
+
+## D-011 Backtest data source: Coinbase Exchange public candles primary, Binance Vision bulk files fallback (2026-09-21)
+Coinbase Exchange `GET /products/{BTC-USD}/candles?granularity=86400&start&end`: key-free, 300 candles per request, 10 requests/second per IP, US-domiciled, and its Market Data Terms grant a licence for "personal or research purposes" with no redistribution and no AI/ML training. True USD quotes. https://docs.cdp.coinbase.com/exchange/reference/exchangerestapi_getproductcandles and https://www.coinbase.com/legal/market_data
+Fallback and cross-check: data.binance.vision monthly 1d kline zips (key-free, US-reachable, USDT quotes, BTCUSDT from 2017-08, SOL/AVAX/UNI from 2020). Its terms PDF is labelled "[Draft]" and "Non-Commercial"; treat as the weaker source.
+Rejected: Kraken (only the last 720 daily bars, cannot page back), CoinGecko free (2-year cap and terms forbid storing data), Yahoo (terms forbid automated collection), CryptoCompare/CoinDesk Data (unreadable, free tier reportedly retired), Stooq (unverifiable, CAPTCHA-gated key reported), Alpaca's own bars (history depth unknown and likely short).
+Coinbase listed SOL, AVAX, DOT, UNI in 2021, which covers every regime fold in D-012. Docs warn "Historical rate data may be incomplete": the loader detects missing days, reports them, and never fills them silently.
+
+## D-013 Layman usability is a requirement (Dave, 2026-09-21 11:10)
+Dave: "this must be usable and understandable by the layman." Consequences, all in scope for v1: a numbered-menu launcher (`Start-Fulcrum.ps1`) so no command has to be memorized; `status` and `report` output written as plain sentences with a one-line "what this means" where a number needs it; Telegram messages likewise; the README opens with a plain-English explanation and a short glossary before any technical section; HANDOFF.md is a checklist of exactly what to type or click and what should appear. Technical detail is not removed, it is moved below the plain layer. Every user-facing string is checked for jargon before done.
+
+## D-012 Regime folds for the walk-forward backtest (2026-09-21)
+The report's "March 2026 stress window" does not match primary sources. Binance Research's monthly reports show March 2026 was a recovery month (market cap +1.8%, BTC +1.51%, ETH +6.27%) with a mild 17 to 28 March pullback (BTC about -12%, ETH about -16%) driven by the US-Iran oil shock and a hawkish Fed repricing. The severe event was February 2026 (market cap -22.6%, BTC -23.5%, ETH -30.8%, Fear and Greed bottomed at 5); Q1 2026 was BTC's worst first quarter since 2018. Folds used, non-overlapping:
+- Stress: 2026-02-01 to 2026-03-31 (covers both the February crash and the March pullback).
+- Trending: 2025-04-07 to 2025-10-06 (BTC $74,637 intraday low to the $126,198 all-time high, about +69%).
+- Choppy: 2023-08-01 to 2023-10-15 (BTC in a $25k to $30k range for about 59 days), extendable back to 2023-04-01.
+This is flagged to Dave in the build summary as a question about which window the report's author meant.

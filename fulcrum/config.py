@@ -269,11 +269,15 @@ class FilterConfig:
     timeout_seconds: float
     max_tokens: int
     shadow_daily_hour_utc: int
+    effort: str = "high"
 
     @staticmethod
     def parse(d: dict) -> "FilterConfig":
         s = "llm_filter"
-        _no_unknown(d, {"mode", "model", "timeout_seconds", "max_tokens", "shadow_daily_hour_utc"}, s)
+        _no_unknown(d, {"mode", "model", "timeout_seconds", "max_tokens", "shadow_daily_hour_utc", "effort"}, s)
+        effort = _opt(d, "effort", str, "high", s)
+        if effort not in ("low", "medium", "high", "xhigh", "max"):
+            raise ConfigError(f"[{s}].effort must be low|medium|high|xhigh|max")
         mode = _req(d, "mode", str, s)
         if mode not in ("off", "shadow", "active"):
             raise ConfigError(f"[{s}].mode must be off|shadow|active")
@@ -288,7 +292,7 @@ class FilterConfig:
             raise ConfigError(f"[{s}].max_tokens must be 64..8192")
         if not 0 <= hr <= 23:
             raise ConfigError(f"[{s}].shadow_daily_hour_utc must be 0..23")
-        return FilterConfig(mode, model, to, mt, hr)
+        return FilterConfig(mode, model, to, mt, hr, effort)
 
 
 @dataclass(frozen=True, slots=True)

@@ -65,7 +65,11 @@ tick_minutes = 15
 [llm_filter]
 # "off" | "shadow" | "active". v1 ships in shadow. Dave flips this one value on day 7.
 mode = "shadow"
-model = "REPLACE_WITH_MODEL_ID"   # set from the claude-api skill during build; never from memory
+# Model id per the claude-api skill on 2026-09-21 (its stated default). Exact string, no date suffix.
+model = "claude-opus-5"
+# Reasoning effort for the verdict: low | medium | high | xhigh | max. Call volume is tiny, so
+# cost is not the constraint; correctness of the JSON contract is.
+effort = "high"
 timeout_seconds = 30
 max_tokens = 1024
 # In shadow mode also run the filter once a day against the hypothetical candidate list.
