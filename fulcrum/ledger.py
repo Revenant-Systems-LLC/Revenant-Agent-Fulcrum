@@ -48,7 +48,6 @@ CREATE TABLE IF NOT EXISTS orders (
   submitted_at TEXT, decided_at TEXT NOT NULL, last_update_at TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS ix_orders_submitted ON orders(submitted_at);
-CREATE INDEX IF NOT EXISTS ix_orders_decided ON orders(decided_at);
 
 CREATE TABLE IF NOT EXISTS order_events (
   event_id INTEGER PRIMARY KEY AUTOINCREMENT, client_order_id TEXT NOT NULL, status TEXT NOT NULL,
@@ -133,6 +132,9 @@ class Ledger:
                 self._conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
             elif row["version"] > SCHEMA_VERSION:
                 raise RuntimeError(f"ledger schema version {row['version']} > code {SCHEMA_VERSION}; cannot downgrade")
+            # This index lives here, after the migration, because on a version-1 file the column
+            # does not exist until the ALTER above has run (found on the first real launch).
+            self._conn.execute("CREATE INDEX IF NOT EXISTS ix_orders_decided ON orders(decided_at)")
             if self._conn.execute("SELECT 1 FROM kill_switch_state WHERE id=1").fetchone() is None:
                 self._conn.execute(
                     "INSERT INTO kill_switch_state(id, tripped, tripped_at, hwm, drawdown_at_trip, reset_at, updated_at)"
