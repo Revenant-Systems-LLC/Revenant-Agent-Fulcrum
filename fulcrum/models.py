@@ -97,6 +97,12 @@ class OrderRequest:
     qty: float | None = None
 
     def __post_init__(self) -> None:
+        # Literal types are not enforced at runtime. A misspelled purpose would silently lose the
+        # exit exemption in risk.check_order, so it is refused here (found by the adversarial pass).
+        if self.purpose not in ("entry", "increase", "exit", "stop"):
+            raise ValueError(f"unknown order purpose {self.purpose!r}")
+        if self.side not in ("buy", "sell"):
+            raise ValueError(f"unknown order side {self.side!r}")
         if (self.notional_usd is None) == (self.qty is None):
             raise ValueError("OrderRequest needs exactly one of notional_usd or qty")
         if self.notional_usd is not None and self.notional_usd <= 0:

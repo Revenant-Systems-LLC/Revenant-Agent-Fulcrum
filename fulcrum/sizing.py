@@ -67,7 +67,7 @@ def target_weights(
         vol = realized_vols.get(symbol, float("nan"))
 
         # If vol is NaN, <= 0, or conviction is 0, weight is 0 with constraint "flat".
-        if conviction == 0.0 or math.isnan(vol) or vol <= 0.0:
+        if not (0.0 < conviction <= 1.0) or not math.isfinite(vol) or vol <= 0.0:
             raw_weights[symbol] = 0.0
         else:
             # raw = conviction * (budget / vol)
@@ -107,7 +107,7 @@ def target_weights(
         vol = realized_vols.get(symbol, float("nan"))
 
         # Determine binding constraint.
-        if conviction == 0.0 or math.isnan(vol) or vol <= 0.0:
+        if not (0.0 < conviction <= 1.0) or not math.isfinite(vol) or vol <= 0.0:
             constraint = "flat"
         elif symbol in gross_cap_hit:
             constraint = "gross_cap"
@@ -183,6 +183,10 @@ def initial_stop(entry_price: float, atr: float, multiple: float) -> float:
     float
         Stop price, floored at a small positive number (never <= 0).
     """
+    # A NaN ATR (the feature warm-up window) would give a NaN stop that never fires while the
+    # position looks protected. Refuse instead, so the caller skips the entry.
+    if not (math.isfinite(entry_price) and math.isfinite(atr) and math.isfinite(multiple)):
+        raise ValueError("cannot work out a stop from a missing price or ATR")
     stop = entry_price - multiple * atr
     # Floor at a small positive number to avoid division by zero later.
     return max(stop, 1e-8)
@@ -203,6 +207,7 @@ def ratchet_stop(previous_stop: float | None, candidate_stop: float) -> float:
     float
         The higher of the two (or the candidate if previous is None).
     """
-    if previous_stop is None:
+    # An unusable stored stop (NaN) is treated as absent so the position can recover protection.
+    if previous_stop is None or not math.isfinite(previous_stop):
         return candidate_stop
     return max(previous_stop, candidate_stop)

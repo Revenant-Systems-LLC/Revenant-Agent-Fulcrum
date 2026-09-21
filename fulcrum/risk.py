@@ -10,12 +10,20 @@ The LLM filter never sees risk limits and cannot affect them. Exits and stops
 from __future__ import annotations
 
 import hashlib
+import math
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
 from .models import OrderRequest, PortfolioState, RiskDecision
 from .config import RiskConfig, SizingConfig, AssetClassConfig
+
+
+def _as_dt(value) -> datetime | None:
+    """sqlite returns stored timestamps as ISO text; the ledger API wants aware datetimes."""
+    if value is None or isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(str(value))
 
 
 def make_client_order_id(
@@ -101,6 +109,14 @@ def check_order(
     if state.trades_last_24h >= risk.max_trades_per_24h:
         return RiskDecision(kind="reject", orders=(), reason="24h trade cap")
 
+    # Rule 3b: the account numbers must be usable. NaN or non-positive equity would make every
+    # clamp below inert (NaN compares False), so a broken account snapshot means no new risk.
+    # Exits were already approved above; this only ever blocks buys.
+    gross = state.gross_exposure
+    if (not math.isfinite(state.equity) or state.equity <= 0 or not math.isfinite(state.cash)
+            or not math.isfinite(gross)):
+        return RiskDecision(kind="reject", orders=(), reason="account numbers unusable")
+
     # Rule 4: Compute order notional and clamp to four limits.
     # Get the initial notional.
     if req.notional_usd is not None:
@@ -110,7 +126,12 @@ def check_order(
         price = state.prices.get(req.symbol)
         if price is None:
             raise ValueError(f"no price for {req.symbol}")
+        if not math.isfinite(price) or price <= 0:
+            # A zero, negative or infinite price cannot size an order; block the buy, do not abort the cycle.
+            return RiskDecision(kind="reject", orders=(), reason=f"unusable price for {req.symbol}")
         orig_notional = req.qty * price
+    if not math.isfinite(orig_notional):
+        return RiskDecision(kind="reject", orders=(), reason="order size unusable")
 
     # Clamp 1: order_pct_equity
     clamp_1 = risk.max_order_pct_equity * state.equity
@@ -228,11 +249,12 @@ class KillSwitch:
             self.ledger.record_kill_event(ts, "init", equity, 0.0, "hwm initialized")
             return False
 
-        # Update hwm if equity exceeds it.
+        # Update hwm if equity exceeds it. sqlite hands timestamps back as ISO text; the ledger
+        # wants datetimes, so convert before passing them through (found by the adversarial pass).
         if equity > hwm:
             self.ledger.set_kill_state(
-                tripped=tripped, hwm=equity, tripped_at=state["tripped_at"] if tripped else None,
-                drawdown_at_trip=state["drawdown_at_trip"], reset_at=state["reset_at"],
+                tripped=tripped, hwm=equity, tripped_at=_as_dt(state["tripped_at"]) if tripped else None,
+                drawdown_at_trip=state["drawdown_at_trip"], reset_at=_as_dt(state["reset_at"]),
             )
             hwm = equity
 
