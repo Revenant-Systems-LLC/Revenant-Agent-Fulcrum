@@ -681,13 +681,18 @@ def test_gitignore_carries_the_whole_baseline():
 
 
 def test_no_credential_shaped_file_sits_in_the_repository_tree():
+    # Corrected 2026-09-21 after the first real launch: the launcher copies config.example.toml
+    # to config.toml on purpose, and that file holds settings, never a credential (every secret
+    # lives in a DPAPI .cred file under ~/.fulcrum). It is required to be git-ignored, not absent.
     patterns = (".cred", ".env", ".key", ".pem", ".pfx", ".p12", "id_rsa")
     offenders = [
         str(p.relative_to(REPO_ROOT))
         for p in repo_files()
-        if p.name.lower().endswith(patterns) or p.name.lower() == "config.toml"
+        if p.name.lower().endswith(patterns)
     ]
     assert offenders == [], f"credential shaped files in the tree: {offenders}"
+    ignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert "config.toml" in [line.strip() for line in ignore], "config.toml must stay git-ignored"
 
 
 def test_no_tracked_file_holds_a_credential_shaped_string():
