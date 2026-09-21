@@ -30,8 +30,8 @@ function Check-Setup {
 }
 
 function Run-Fulcrum {
-    param([string[]]$Args)
-    & $Py -m fulcrum @Args
+    param([string[]]$Command)
+    & $Py -m fulcrum @Command
     Write-Host ''
     Write-Host '  (press Enter to go back to the menu)' -ForegroundColor DarkGray
     [void](Read-Host)
